@@ -1,6 +1,5 @@
 #!/bin/bash
 
-if [[ "a" == "b" ]]; then
 #Update packages
 sudo apt update
 sudo apt upgrade
@@ -51,7 +50,6 @@ sudo mysql -u root -e "
 cat src/php/connect.php | sed -e "s/##DBNAME##/${dbname}/" | sed -e "s/##PHPPASSWORD##/${phppassword}/" > src/php/connect.php.tmp
 sudo mv src/php/connect.php.tmp /var/www/html/connect.php
 sudo cp src/php/index.php /var/www/html/index.php
-fi
 
 #Perform tests
 if [[ "$(curl --insecure https://localhost/test.php 2>/dev/null)" == '{"uri":"\/test.php"}' ]]; then
