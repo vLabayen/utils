@@ -1,0 +1,28 @@
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+
+    ssl_certificate /etc/ssl/certs/##SERVERNAME##_nginx.crt;
+    ssl_certificate_key /etc/ssl/private/##SERVERNAME##_nginx.key;
+    ssl_protocols TLSv1.2 TLSv1.1 TLSv1;
+
+    root /var/www/html;
+    index index.php index.html index.htm index.nginx-debian.html;
+
+    server_name ##SERVERNAME##;
+
+    location / {
+	rewrite ^.*$ /index.php;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php##PHPVERSION##-fpm.sock;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
