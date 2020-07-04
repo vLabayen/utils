@@ -1,0 +1,313 @@
+#!/bin/bash
+
+#Get params
+src=()
+dst=()
+check_file_change_interval=1
+check_new_file_interval=1
+verbose=0
+color=0
+remote=""
+while getopts "s:d:c:n:vh-:" opt; do
+    case $opt in
+	- )
+	    case "${OPTARG}" in
+	      #longopt_with_value)
+		#val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                #echo "Parsing option: '--${OPTARG}', value: '${val}'";;
+	      #longopt_without_value)
+		#echo "Parsing option : '--${OPTARG}'";;
+
+	      color) color=1;;
+            esac;;
+        s )
+	    if [ ! -d "$OPTARG" ]; then
+		echo "$OPTARG not found"
+		exit 1
+	    else src+=($(realpath "$OPTARG"))
+            fi;;
+        d )
+	    if [ ! -d "$OPTARG" ]; then
+		echo "$OPTARG not found"
+		exit 1
+	    else dst+=($(realpath "$OPTARG"))
+	    fi;;
+	c ) check_file_change_interval=$OPTARG;;
+	n ) check_new_file_interval=$OPTARG;;
+	r ) remote=$OPTARG;;
+	v ) verbose=$(($verbose + 1));;
+        h )
+            echo -e "\e[1m\e[4mRequired args\e[0m:"
+            echo "  -s <path/to/src>            : Path to the src folder. All files will be monitorized recusively, excluding dot-starting files/dirs"
+	    echo "  -d <path/to/dst>            : Path to the dst folder. Missing folders will be created. Existing files that are not in srcdir will be ignored"
+	    echo ""
+	    echo -e "\e[1mNote\e[0m: -s and -d must be provided in pairs. There could be as many -s/-d pairs as desired"
+	    echo "The fisrt provided -s will be associated with the first provided -d, and so on"
+	    echo ""
+	    echo "Example : checkChanges -s path/to/src -d path/to/dst"
+	    echo "Example : checkChanges -s path/to/src1 -d path/to/dst1 -s path/to/src2 -d path/to/dst2"
+	    echo "Example : checkChanges -s path/to/src1 -s path/to/src2 -d path/to/dst1 -d path/to/dst2"
+	    echo ""
+	    echo -e "\e[1m\e[4mOptional args\e[0m:"
+	    echo "  -h                          : Show this help and exit"
+	    echo "  -v                          : Increment verbose level (up to 2). Error are always notified"
+	    echo "  -c <change_interval>        : Time in seconds between checks for changes in srcfiles. Default 1"
+	    echo "  -n <new_interval>           : Time in seconds between checks for new files in srcdirs. Default 1"
+	    echo "  -r <remote_host>            : Set remote host. It must be a host present in ~/.shh/config with key access without passphrase"
+	    echo "  --color                     : Enable colored output"
+            exit 1
+    esac
+done
+
+function print_msg() {
+	#print_msg msg verboseLevel [green/blue/orange/red/underlinewhite]
+	if [ ! $verbose -ge $2 ]; then return; fi
+
+	if [ $color -gt 0 ] && [ ! -z $3 ]; then
+		case $3 in
+			green)		echo -e "\e[92m$1\e[0m";;
+			blue)		echo -e "\e[96m$1\e[0m";;
+			orange) 	echo -e "\e[38;5;214m$1\e[0m";;
+			red)		echo -e "\e[91m$1\e[0m";;
+			underlinewhite)	echo -e "\e[4m$1\e[0m";;
+			*)		echo -e $1;;
+		esac
+	else
+		echo -e $1
+	fi
+}
+
+function update_file() {
+	#update_file src dst
+	if [ -z $remote ]; then cp $1 $2
+	else : #scp $1 $remote:$2
+	fi
+}
+
+function remove_file() {
+	#remove_file file
+	if [ -z $remote ]; then rm $1
+	else :
+	fi
+}
+
+function remove_dir() {
+	#remove_dir dir
+	if [ -z $remote ]; then rm -r $1
+	else :
+	fi
+}
+
+
+#Get all the files inside src folders and set path to dst folder
+srcfiles=()
+dstfiles=()
+if [ ${#src[@]} -eq 0 ]; then
+	print_msg "No src folders given" 0 red
+	print_msg "Use -h option for usage help" 0 white
+	exit 1
+elif [ ${#src[@]} -ne ${#dst[@]} ]; then
+	print_msg "Src and dst has different lenghts" 0 red
+	print_msg "Use -h option for usage help" 0 white
+	exit 1
+else
+	#Iterate over all dirs in src
+	for i in ${!src[@]}; do
+		#Get src and dst dir
+		s="${src[$i]}"
+		d="${dst[$i]}"
+
+		#Get all files in src
+		ffiles=$(find $s -type f -exec realpath --relative-to $s {} \;)
+		if [ -n "${ffiles}" ]; then
+			for ff in $ffiles; do
+				#Ignore files/dirs starting with .
+				ignore=$(echo $ff | awk '{split($1,a,"/"); for(i in a) if(substr(a[i],1,1) == "."){print "y"; exit 1}}')
+				if [[ "$ignore" == "y" ]]; then continue; fi
+
+				#Add files to srcfiles and dstfiles
+				srcfiles+=("$s/$ff")
+				dstfiles+=("$d/$ff")
+
+				#Ensure dst dir exists
+				relativedir=$(dirname $ff)
+				mkdir -p "$d/$relativedir" #TODO --> support remote
+			done
+		else
+			print_msg "No files found in folder : $s" 1 orange
+		fi
+	done
+fi
+
+#Raise error if no files
+if [ ${#srcfiles[@]} -eq 0 ]; then
+	print_msg "No files to check" 0 red
+	exit 1
+
+#Show config and files
+else
+	print_msg "Checking files changes every $check_file_change_interval seconds" 2 underlinewhite
+	print_msg "Checking new files every $check_new_file_interval seconds :\e[0m" 2 underlinewhite
+	print_msg "Checking files :" 2
+	for i in ${!srcfiles[@]}; do
+		print_msg "\t${srcfiles[$i]} ---> ${dstfiles[$i]}" 2
+	done
+fi
+
+#Get initial srcfiles md5 and check if they exists in dst
+filemd5=()
+for i in ${!srcfiles[@]}; do
+	#Get md5 for each srcfile and append to array
+	md5=$(md5sum "${srcfiles[$i]}" | awk '{print $1}')
+	filemd5+=("$md5")
+
+	#Check if that file exists in dstdir
+	if [ ! -f "${dstfiles[$i]}" ]; then #TODO --> support remote
+		#Copy file if it does not exists
+		update_file "${srcfiles[$i]}" "${dstfiles[$i]}"
+		print_msg "[+] Created file ${dstfiles[$i]}" 1 green
+	else
+		#Check if the md5 do not match. Update file it so
+		dstmd5=$(md5sum "${dstfiles[$i]}" | awk '{print $1}') #TODO --> support remote
+		if [ "$md5" != "$dstmd5" ]; then
+			update_file "${srcfiles[$i]}" "${dstfiles[$i]}"
+			print_msg "[*] Updated file ${dstfiles[$i]}" 1 blue
+		fi
+	fi
+done
+
+
+#Infinite loop
+print_msg "" 2
+print_msg "Starting file monitorizacion" 1 underlinewhite
+new_file_timer=0
+while true; do
+	#Check for changes
+	for i in ${!srcfiles[@]}; do
+		#Check that the file has not been deleted
+		tmp=$(md5sum ${srcfiles[$i]} 2>/dev/null)
+		if [[ $? -eq 1 ]]; then
+			#Ensure the file is removed and its not a md5 error
+			if [ -f ${srcfiles[$i]} ]; then continue; fi
+
+			#Store in local vars and remove from srcfiles and dstfiles array
+			s=${srcfiles[$i]}
+			d=${dstfiles[$i]}
+			unset "srcfiles[i]"
+			unset "dstfiles[i]"
+
+			#Check if just the file was removed or it was a full directory
+			#For that, check if there are missing folders in the path
+			words=$(echo $s | awk '{n=split($0,a,"/"); for (i=1;i<n;i++) print a[i]}')
+			path=""
+			srcpath=""
+			missing_folders=0
+			for w in $words; do
+				path="$path/$w"
+				if [ ! -d "$path" ]; then
+					missing_folders=$(($missing_folders + 1));
+					if [ -z "$srcpath" ]; then srcpath=$path; fi
+				fi
+			done
+			#If the removed one was just the file
+			if [ $missing_folders -eq 0 ]; then
+				print_msg "[-] Removed file $d" 1 orange
+				remove_file $d
+				continue
+			fi
+
+			#For a removed dir
+			#Get the equivalent path in dstdir
+			remove=($(echo $d | awk '{n=split($0,a,"/"); for(i=1;i<n;i++) print a[i]}'))
+			dstpath=""
+			for i in ${!remove[@]}; do
+				dstpath="$dstpath/${remove[$i]}"
+				if [ ! $i -lt $((${#remove[@]} - $missing_folders)) ]; then
+					#Get the dstdir of the removed dir
+					ddir=""
+					for j in ${!dst[@]}; do
+						tmp=$(echo "$d" | grep "${dst[$j]}")
+						if [ ! -z $tmp ]; then
+							ddir=${dst[$j]};
+							break
+						fi
+					done
+					if [ -z $ddir ]; then
+						print_msg "[!] Unexpected error" 0 red
+						exit 1
+					fi
+
+					#Ensure that the dir to remove is not outside dstdir
+					in_dst=$(echo "$dstpath" | grep "$ddir")
+					if [ ! -z $in_dst ]; then
+						#Ensure that the dir has not any other file
+						other_files=$(find $dstpath -type f | grep -v $d) #TODO --> support remote
+						if [ ! -z "$other_files" ]; then
+							print_msg "[-] Removed file $d" 1 orange
+							remove_file $d
+						else
+							print_msg "[-] Removed file $d" 1 orange
+							print_msg "[-] Removed folder $dstpath" 1 orange
+							remove_dir $dstpath
+						fi
+					else
+						print_msg "[!] Removed folders is outside $ddir" 0 red
+						exit 1
+					fi
+
+					break
+				fi
+			done
+
+			#Continue to next file
+			continue
+		fi
+
+		#Get actual md5 of the file and compare with last one
+		newmd5=$(echo $tmp | awk '{print $1}')
+		oldmd5=${filemd5[$i]}
+		if [ "$newmd5" != "$oldmd5" ]; then
+			print_msg "[*] Updated file ${dstfiles[$i]}" 1 blue
+
+			#Update md5 in the array and file in dstdir
+			filemd5[$i]=$newmd5
+			update_file ${srcfiles[$i]} ${dstfiles[$i]}
+		fi
+	done
+
+	#Sleep and increment new file timer
+	sleep $check_file_change_interval
+	new_file_timer=$(($new_file_timer + $check_file_change_interval))
+
+	#Check for new files if timer is gt new file interval
+	if [ $new_file_timer -gt $check_new_file_interval ]; then
+		new_file_timer=0
+		for i in ${!src[@]}; do
+			s="${src[$i]}"
+			d="${dst[$i]}"
+			ffiles=$(find $s -type f -exec realpath --relative-to $s {} \;)
+			if [ -n "${ffiles}" ]; then
+				for ff in $ffiles; do
+					#Ignore files/dirs starting with .
+					ignore=$(echo $ff | awk '{split($1,a,"/"); for(i in a) if(substr(a[i],1,1) == "."){print "y"; exit 1}}')
+					if [[ "$ignore" == "y" ]]; then continue; fi
+
+					#Check if new file. Append to arrays and ensure dst dir exists
+					isnew=$(echo "${srcfiles[@]}" | grep "$s/$ff")
+					if [[ -z "$isnew" ]]; then
+						srcfiles+=("$s/$ff")
+						dstfiles+=("$d/$ff")
+						md5=$(md5sum $s/$ff | awk '{print $1}')
+						filemd5+=("$md5")
+
+						relativedir=$(dirname $ff)
+						mkdir -p "$d/$relativedir"
+						update_file "$s/$ff" "$d/$ff"
+
+						print_msg "[+] Created file $d/$ff" 1 green
+					fi
+				done
+			fi
+		done
+	fi
+done
