@@ -1,0 +1,6 @@
+#REMEMBER
+remem=$(remember -s)
+if [[ ! -z "$remem" ]]; then
+       echo -e "\033[1mREMEMBER\033[0m"
+       echo -e "$remem"
+fi

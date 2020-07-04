@@ -1,0 +1,100 @@
+#!/usr/bin/python3
+import sys
+import os
+sys.path.insert(0, '/media/windows/proyects/easycolor')
+from printer import cprepare
+
+srcfile = "/etc/remember/remember.csv"
+
+help_args = ['-h', '--help']
+add_args = ['-a', '--add']
+remove_args = ['-r', '--remove']
+move_args = ['-m', '--move']
+scriptable_show = ['-s', '--scriptable']
+move_directions = {
+        'up' : ['u', 'up'],
+        'down' : ['d', 'down']
+}
+
+
+def readf(file):
+	with open(file, 'r') as f: lines = [l[:-1] for l in f if not l[0] == '#']
+	return lines
+
+def writef(file, lines):
+	with open(file, 'w') as f: f.write('{}\n'.format('\n'.join(lines)))
+
+def appendf(file, line):
+	with open(file, 'a') as f: f.write('{}\n'.format(line))
+
+
+sys.argv = sys.argv[1:]
+is_help = any([x in sys.argv for x in help_args])
+is_add = any([x in sys.argv for x in add_args])
+is_remove = any([x in sys.argv for x in remove_args])
+is_move = any([x in sys.argv for x in move_args])
+
+
+try : lines = readf(srcfile)
+except : lines = []
+
+if is_help:
+	print('ADD:')
+	print('    remember -a/--add <msg>')
+	print('                  remember -a "message"')
+	print('REMOVE')
+	print('    remember -r/--remove <index>')
+	print('                  remember -r index')
+	print('MOVE')
+	print('    remember -m/--move <direction> <index> <positions>')
+	print('                  remember -m up 2')
+	print('                  remember -m down 2')
+	print('                  remember -m up 0 2')
+	print('                  remember -m down 5 2')
+	print('SHOW')
+	print('    remember')
+	print('    remember -s/--scriptable')
+
+elif is_add:
+	used_arg = [arg for arg in add_args if arg in sys.argv][0]
+	try: msg = sys.argv[sys.argv.index(used_arg) + 1]
+	except: sys.exit(cprepare('{} must be followed by the msg'.format('/'.join(add_args)), color = 'lred'))
+
+	if len(lines) == 0: writef(srcfile, [msg])
+	else : appendf(srcfile, msg)
+
+elif is_remove:
+	used_arg = [arg for arg in remove_args if arg in sys.argv][0]
+	try: rm_index = int(sys.argv[sys.argv.index(used_arg) + 1])
+	except: sys.exit(cprepare('{} must be followed by the index'.format('/'.join(remove_args)), color = 'lred'))
+
+	lines.pop(rm_index)
+	if len(lines) > 0: writef(srcfile, lines)
+	else : os.remove(srcfile)
+elif is_move:
+	used_arg = [arg for arg in move_args if arg in sys.argv][0]
+	try: direction = sys.argv[sys.argv.index(used_arg) + 1]
+	except : sys.exit(cprepare('{} must be followed by one of the following: {}'.format('/'.join(move_args), ','.join([x for arr in move_directions.values() for x in arr])), color = 'lred'))
+	try: index = int(sys.argv[sys.argv.index(used_arg) + 2])
+	except : sys.exit(cprepare('{} must be followed in second place by the index of the item to move', color = 'lred'))
+
+	direction = sys.argv[sys.argv.index(used_arg) + 1]
+	move_up = any([direction == x for x in move_directions['up']])
+	move_down = any([direction == x for x in move_directions['down']])
+	if not move_up and not move_down : sys.exit(cprepare('{} must be followed by one of the following: {}'.format('/'.join(move_args), ','.join([x for arr in move_directions.values() for x in arr])), color = 'lred'))
+
+	try : positions = int(sys.argv[sys.argv.index(used_arg) + 3])
+	except : positions = 1
+
+	if move_down: #Down in the file and representation means up in the array
+		if index + positions >= len(lines): positions = len(lines) - 1 - index
+		lines = lines[:index] + lines[index+1:index+1+positions] + [lines[index]] + lines[index+1+positions:]
+	else : #Up in the file and rep means down in the array
+		if index - positions >= 0: lines = lines[:index-positions] + [lines[index]] + lines[index-positions:index] + lines[index+1:]
+	writef(srcfile, lines)
+
+else:
+	if any([x in sys.argv for x in scriptable_show]):
+		for line in lines: print(line)
+	else :
+		for i,line in enumerate(lines): print('{} : {}'.format(i, line))

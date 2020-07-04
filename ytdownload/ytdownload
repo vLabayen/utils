@@ -1,0 +1,36 @@
+#!/usr/bin/python3
+import pafy
+import os
+
+#Get video url
+url = input('Video url: ')
+
+#Get download format
+format = input('Download video/audio (v/a): ')
+if format not in ['audio', 'video', 'v', 'a']:
+	print('Unknown format. Downloading as video')
+	format = 'video'
+if format == 'v': format = 'video'
+if format == 'a': format = 'audio'
+
+#Get download path
+actual_path = os.getcwd()
+path = input('Path to store the downloaded file ({}): '.format(actual_path))
+if path == "": path = actual_path
+
+#Perform the download
+if format == 'video' : pafy.new(url).getbest(preftype = 'mp4').download(path)
+else :
+	#Download file
+	handler = pafy.new(url)
+	handler.getbestaudio().download(path)
+
+	#Replace some characters from the title name
+	title = handler.title.replace("/", "_")
+	newtitle = title.replace(" ", "_").replace("(", "_").replace(")", "_").replace("|", "_")
+
+	#Convert from webm to mp3
+	print('Converting from webm to mp3...')
+	os.rename("{}.webm".format(title), "{}.webm".format(newtitle))
+	os.system("ffmpeg -i {}.webm -vn -ab 128k -ar 44100 -y {}.mp3 2>> /dev/null".format(newtitle, newtitle))
+	os.remove("{}.webm".format(newtitle))

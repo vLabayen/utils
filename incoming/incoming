@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+#TODO : Add change-config functionality
+
+import sys
+from datetime import datetime as dt
+from datetime import timedelta as td
+from dateutil.relativedelta import relativedelta as rtd
+
+srcfile = '/etc/incoming/src/incoming.csv'
+help_args = ['-h', '--help']
+add_args = ['-a', '--add']
+remove_args = ['-r', '--remove']
+update_args = ['-u', '--update']
+typefilter_args = {
+	'exam' : ['-e', '--exams'],
+	'task' : ['-t', '--tasks'],
+	'other' : ['-o', '--others']
+}
+datefilter_args = ['-d', '--date']
+date_options_to_delta = {'d' : td(hours = 24), 'w' : td(weeks = 1), 'm' : rtd(months = 1)}
+
+
+def readf(file):
+	with open(file, 'r') as f: lines = [l.split('\n')[0] for l in f if not l.startswith('#')]
+	return lines
+
+def writef(file, lines):
+	with open(file, 'w') as f:
+		for l in lines: f.write('{}\n'.format(l))
+
+def appendf(file, line):
+	with open(file, 'a') as f: f.write('{}\n'.format(line))
+
+def sortl(lines):
+	lines.sort(key = lambda item : dt.strptime(item.split(',')[1] if item.split(',')[1] != '?' else '2050-12-31', "%Y-%m-%d"))
+	return lines
+
+
+sys.argv = sys.argv[1:]
+is_help = [x in sys.argv for x in help_args]
+is_add = [x in sys.argv for x in add_args]
+is_remove = [x in sys.argv for x in remove_args]
+is_update = [x in sys.argv for x in update_args]
+is_typefilter = {k : [x in sys.argv for x in arr] for k,arr in typefilter_args.items()}
+is_datefilter = [x in sys.argv for x in datefilter_args]
+
+try : lines = readf(srcfile)
+except : lines = []
+
+
+if any(is_help):
+	print('Options :')
+	print('	Add :		-a/--add : 		incoming -a <subject> <date> [type]')
+	print('	Remove :	-r/--remove : 		incoming -r <index>')
+	print('	Update :	-u/--update : 		incoming -u <index> <newdate>')
+	print('	List : 					incoming')
+	print('		- Type filters :    		incoming [filters]')
+	print('			-e/--exams :		show type exam')
+	print('			-t/--tasks : 		show type task')
+	print('			-o/--others :		show type other')
+	print('		- Date filters :		incoming -d <range>')
+	print('			-d/--date : 		show incoming events in the date range')
+	print('		  - Date ranges : ')
+	print('			d : day			incoming -d 2d')
+	print('			w : week		incoming -d 1w')
+	print('			m : month		incoming -d 12m')
+	print('	  - Multiple filters can be used : 	example : incoming -e -t -d 3d')
+	print()
+	print('Notes:')
+	print('  Date format is yyyy-mm-dd')
+	print('  Available types are exam,task,other')
+	sys.exit()
+
+elif any(is_add):
+	subject = sys.argv[is_add.index(True) + 1]
+	date = sys.argv[is_add.index(True) + 2]
+	try :
+		type = sys.argv[is_add.index(True) + 3]
+		if type not in ['exam', 'task', 'other']: type = 'other'
+	except : type = 'other'
+
+	lines.append('{},{},{}'.format(subject, date, type))
+	lines = sortl(lines)
+	writef(srcfile, lines)
+
+elif any(is_remove):
+	index = int(sys.argv[is_remove.index(True) + 1])
+
+	lines = lines[:index] + lines[index + 1:]
+	lines = sortl(lines)
+	writef(srcfile, lines)
+
+elif any(is_update):
+	index = int(sys.argv[is_update.index(True) + 1])
+	newdate = sys.argv[is_update.index(True) + 2]
+
+	subject, date, type = lines[index].split(',')
+	lines[index] = '{},{},{}'.format(subject, newdate, type)
+	lines = sortl(lines)
+	writef(srcfile, lines)
+
+else :
+	def print_events(lines, is_typefilter):
+		typefilter = any([x for arr in is_typefilter.values() for x in arr])
+		for i,l in enumerate(lines):
+			subject,date,type = l.split(',')
+			if (any(is_typefilter[type]) if typefilter else True): print('{} - {} : {}'.format(i, date, subject))
+
+	if not any(is_datefilter): print_events(lines, is_typefilter)
+	else :
+		daterange = sys.argv[is_datefilter.index(True) + 1]
+		value, unit = int(daterange[:-1]), daterange[-1]
+		lines = [l for l in lines if dt.strptime(l.split(',')[1] if l.split(',')[1] != '?' else '2050-12-31', "%Y-%m-%d") < dt.now() + (value * date_options_to_delta[unit])]
+		print_events(lines, is_typefilter)
