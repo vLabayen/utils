@@ -4,12 +4,18 @@
 #TODO : Store config in /etc/incoming/incoming.cfg
 #TODO : Use config in the .bashrc code
 
-scriptpath="$( cd "$(dirname "$0")" ; pwd -P )"
+if [ ! -z "$1" ]; then
+	scriptpath=$1
+else
+	scriptpath="/usr/bin/"
+fi
+
+thispath="$( cd "$(dirname "$0")" ; pwd -P )"
 user=$(whoami)
 
-sudo cp incoming /usr/bin/
-sudo mkdir /etc/incoming
-sudo touch /etc/incoming/incoming.csv
-sudo chown ${user}:${user} /etc/incoming/incoming.csv
-
-cat $scriptpath/src/bashrc.txt >> ~/.bashrc
+sudo cp incoming $scriptpath
+sudo chown ${user}:${user} $scriptpath/incoming
+sudo chmod +xr $scriptpath/incoming
+mkdir ~/.incoming
+touch ~/.incoming/incoming.csv
+cat $thispath/src/bashrc.txt >> ~/.bashrc
