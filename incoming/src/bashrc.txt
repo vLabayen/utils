@@ -3,10 +3,7 @@
 first_group=$(incoming -d 1w | awk '{$1=$2=""; print substr($0, 3)}')
 secnd_group=$(incoming -d 3w | awk '{$1=$2=""; print substr($0, 3)}')
 
-if [[ ! -z "$secnd_group" ]]; then
-        if [[ ! -z "$recordatorios" ]]; then echo ""; fi;
-        echo -e "\033[1mINCOMING EVENTS : Today ($(date))\033[0m";
-fi
+if [[ ! -z "$secnd_group" ]]; then echo -e "\033[1mINCOMING EVENTS : Today ($(date))\033[0m"; fi
 if [[ ! -z "$first_group" ]]; then echo -e "\033[31m${first_group}\033[0m"; fi
 if [[ ! -z "$secnd_group" ]]; then
         if [[ -z "$first_group" ]]; then echo -e "\033[38;5;214m${secnd_group}\033[0m";
