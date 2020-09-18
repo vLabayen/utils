@@ -1,24 +1,30 @@
 #!/bin/bash
 
-#Get params
+if [ $(whoami) == "root" ]; then
+	echo "This script cannot be run as root!"
+	echo "Recusive removes (rm -r) can be performed"
+	exit 1;
+fi
+
+#Available params in optstring order
+#some getopts doc: https://www.computerhope.com/unix/bash/getopts.htm
+#long options hack: https://stackoverflow.com/questions/402377/using-getopts-to-process-long-and-short-command-line-options
+color=0
+ignore_dot=0
 src=()
 dst=()
 check_file_change_interval=1
 check_new_file_interval=1
-verbose=0
-color=0
 remote=""
-while getopts "s:d:c:n:vh-:" opt; do
+verbose=0
+current_version="1.3"
+
+while getopts "s:d:c:n:r:vVh-:" opt; do
     case $opt in
 	- )
 	    case "${OPTARG}" in
-	      #longopt_with_value)
-		#val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                #echo "Parsing option: '--${OPTARG}', value: '${val}'";;
-	      #longopt_without_value)
-		#echo "Parsing option : '--${OPTARG}'";;
-
 	      color) color=1;;
+	      ignore-dot) ignore_dot=1;;
             esac;;
         s )
 	    if [ ! -d "$OPTARG" ]; then
@@ -34,8 +40,17 @@ while getopts "s:d:c:n:vh-:" opt; do
 	    fi;;
 	c ) check_file_change_interval=$OPTARG;;
 	n ) check_new_file_interval=$OPTARG;;
-	r ) remote=$OPTARG;;
+	r )
+            ssh -q -o BatchMode=yes  -o StrictHostKeyChecking=no -o ConnectTimeout=5 $OPTARG 'exit 0'
+            if [ "$?" != "0" ]; then
+                echo "Conectivity test to $OPTARG failed"
+                exit 1
+            fi
+            remote=$OPTARG;;
 	v ) verbose=$(($verbose + 1));;
+	V )
+            echo "checkChanges version : $current_version"
+	    exit 0;;
         h )
             echo -e "\e[1m\e[4mRequired args\e[0m:"
             echo "  -s <path/to/src>            : Path to the src folder. All files will be monitorized recusively, excluding dot-starting files/dirs"
@@ -51,19 +66,24 @@ while getopts "s:d:c:n:vh-:" opt; do
 	    echo -e "\e[1m\e[4mOptional args\e[0m:"
 	    echo "  -h                          : Show this help and exit"
 	    echo "  -v                          : Increment verbose level (up to 2). Error are always notified"
+	    echo "  -V				: Show version and exit"
 	    echo "  -c <change_interval>        : Time in seconds between checks for changes in srcfiles. Default 1"
 	    echo "  -n <new_interval>           : Time in seconds between checks for new files in srcdirs. Default 1"
 	    echo "  -r <remote_host>            : Set remote host. It must be a host present in ~/.shh/config with key access without passphrase"
 	    echo "  --color                     : Enable colored output"
-            exit 1
+	    echo "  --ignore-dot                : Ignore files and directories that start with a dot"
+            exit 0
     esac
 done
 
 function print_msg() {
 	#print_msg msg verboseLevel [green/blue/orange/red/underlinewhite]
+
+	#verboseLevel arg must be >= global verbose level
 	if [ ! $verbose -ge $2 ]; then return; fi
 
-	if [ $color -gt 0 ] && [ ! -z $3 ]; then
+	#color arg is used if --color flag is providad when running the script
+	if [ $color -gt 0 ] && [ ! -z "$3" ]; then
 		case $3 in
 			green)		echo -e "\e[92m$1\e[0m";;
 			blue)		echo -e "\e[96m$1\e[0m";;
@@ -77,24 +97,148 @@ function print_msg() {
 	fi
 }
 
+function create_dir() {
+	#create_dir dst
+	if [ -z "$1" ]; then
+		print_msg "First argument (dst) of create_dir is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then mkdir -p $1
+	else ssh $remote "mkdir -p $1"
+	fi
+}
+
+function check_file() {
+	#check_file dst
+	if [ -z "$1" ]; then
+		print_msg "First argument (dst) of check_file is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		if [ -f "$1" ]; then echo "0"
+		else echo "1"
+		fi
+	else
+		ssh $remote "if [ -f \"$1\" ]; then exit 0; else exit 1; fi"
+		echo "$?"
+	fi
+}
+
+function md5_file() {
+	#md5_file dst
+	if [ -z "$1" ]; then
+		print_msg "First argument (dst) of md5_file is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		md5=$(md5sum "$1" | awk '{print $1}')
+		echo "$md5"
+	else
+		md5=$(ssh $remote "cat $1" | md5sum | awk '{print $1}')
+		echo "$md5"
+	fi
+}
+
+function create_file() {
+	#create_file src dst
+	if [ -z "$1" ]; then
+		print_msg "First argument (src) of create_file is empty" 0 red
+		exit 1
+	fi
+	if [ -z "$2" ]; then
+		print_msg "Second argument (dst) of create_file is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		cp $1 $2
+		print_msg "[+] Created file $2" 1 green
+	else
+		scp $1 $remote:$2
+		print_msg "[+] Created file $remote:$2" 1 green
+	fi
+}
+
 function update_file() {
 	#update_file src dst
-	if [ -z $remote ]; then cp $1 $2
-	else : #scp $1 $remote:$2
+	if [ -z "$1" ]; then
+		print_msg "First argument (src) of update_file is empty" 0 red
+		exit 1
+	fi
+	if [ -z "$2" ]; then
+		print_msg "Second argument (dst) of update_file im empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		cp $1 $2
+		print_msg "[*] Updated file $2" 1 blue
+	else
+		scp $1 $remote:$2
+		print_msg "[*] Updated file $remote:$2" 1 blue
+	fi
+}
+
+function otherfiles_in_dir() {
+	#find_files dir except_file
+	if [ -z "$1" ]; then
+		print_msg "First argument (dir) of otherfiles_in_dir is empty" 0 red
+		exit 1
+	fi
+	if [ -z "$2" ]; then
+		print_msg "Second argument (except_file) of otherfiles_in_dir is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then otherfiles=$(find $1 -type f | grep -v $2)
+	else otherfiles=$(ssh $remote "find $1 -type f" | grep -v $2)
+	fi
+
+	if [ -z "$otherfiles" ]; then echo "0"
+	else echo "1"
 	fi
 }
 
 function remove_file() {
 	#remove_file file
-	if [ -z $remote ]; then rm $1
-	else :
+	if [ -z "$1" ]; then
+		print_msg "Argument (file) of remove_file is empty" 0 red
+		exit 1
+	fi
+	if [ "$1" == "/" ]; then
+		print_msg "Argument (file) of remove_file is /" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		rm $1
+		print_msg "[-] Removed file $1" 1 orange
+	else
+		ssh $remote "rm $1"
+		print_msg "[-] Removed file $remote:$1" 1 orange
 	fi
 }
 
 function remove_dir() {
 	#remove_dir dir
-	if [ -z $remote ]; then rm -r $1
-	else :
+	if [ -z "$1" ]; then
+		print_msg "Argument (dir) of remove_dir is empty" 0 red
+		exit 1
+	fi
+	if [ "$1" == "/" ]; then
+		print_msg "Argument (dir) of remove_dir is /" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		rm -r $1
+		print_msg "[-] Removed folder $1" 1 orange
+	else
+		ssh $remote "rm -r $1"
+		print_msg "[-] Removed folder $remote:$1" 1 orange
 	fi
 }
 
@@ -117,13 +261,15 @@ else
 		s="${src[$i]}"
 		d="${dst[$i]}"
 
-		#Get all files in src
+		#Get all files in src (find files in $s, replace ~ and relative paths to absolute, return relative path to $s)
 		ffiles=$(find $s -type f -exec realpath --relative-to $s {} \;)
 		if [ -n "${ffiles}" ]; then
 			for ff in $ffiles; do
-				#Ignore files/dirs starting with .
-				ignore=$(echo $ff | awk '{split($1,a,"/"); for(i in a) if(substr(a[i],1,1) == "."){print "y"; exit 1}}')
-				if [[ "$ignore" == "y" ]]; then continue; fi
+				if [ $ignore_dot -eq 1 ]; then
+					#Ignore files/dirs starting with .
+					ignore=$(echo $ff | awk '{split($1,a,"/"); for(i in a) if(substr(a[i],1,1) == "."){print "y"; exit 1}}')
+					if [[ "$ignore" == "y" ]]; then continue; fi
+				fi
 
 				#Add files to srcfiles and dstfiles
 				srcfiles+=("$s/$ff")
@@ -131,7 +277,7 @@ else
 
 				#Ensure dst dir exists
 				relativedir=$(dirname $ff)
-				mkdir -p "$d/$relativedir" #TODO --> support remote
+				create_dir "$d/$relativedir"
 			done
 		else
 			print_msg "No files found in folder : $s" 1 orange
@@ -150,7 +296,9 @@ else
 	print_msg "Checking new files every $check_new_file_interval seconds :\e[0m" 2 underlinewhite
 	print_msg "Checking files :" 2
 	for i in ${!srcfiles[@]}; do
-		print_msg "\t${srcfiles[$i]} ---> ${dstfiles[$i]}" 2
+		if [ -z "$remote" ]; then print_msg "\t${srcfiles[$i]} ---> ${dstfiles[$i]}" 2
+		else print_msg "\t${srcfiles[$i]} ---> $remote:${dstfiles[$i]}" 2
+		fi
 	done
 fi
 
@@ -162,34 +310,39 @@ for i in ${!srcfiles[@]}; do
 	filemd5+=("$md5")
 
 	#Check if that file exists in dstdir
-	if [ ! -f "${dstfiles[$i]}" ]; then #TODO --> support remote
+	if [ "$(check_file ${dstfiles[$i]})" == "1" ]; then
 		#Copy file if it does not exists
-		update_file "${srcfiles[$i]}" "${dstfiles[$i]}"
-		print_msg "[+] Created file ${dstfiles[$i]}" 1 green
+		create_file "${srcfiles[$i]}" "${dstfiles[$i]}"
 	else
 		#Check if the md5 do not match. Update file it so
-		dstmd5=$(md5sum "${dstfiles[$i]}" | awk '{print $1}') #TODO --> support remote
-		if [ "$md5" != "$dstmd5" ]; then
-			update_file "${srcfiles[$i]}" "${dstfiles[$i]}"
-			print_msg "[*] Updated file ${dstfiles[$i]}" 1 blue
-		fi
+		dstmd5=$(md5_file "${dstfiles[$i]}")
+		if [ "$md5" != "$dstmd5" ]; then update_file "${srcfiles[$i]}" "${dstfiles[$i]}"; fi
 	fi
 done
-
 
 #Infinite loop
 print_msg "" 2
 print_msg "Starting file monitorizacion" 1 underlinewhite
 new_file_timer=0
 while true; do
-	#Check for changes
+	#Iterate over all srcfile checking for changes
 	for i in ${!srcfiles[@]}; do
-		#Check that the file has not been deleted
-		tmp=$(md5sum ${srcfiles[$i]} 2>/dev/null)
-		if [[ $? -eq 1 ]]; then
-			#Ensure the file is removed and its not a md5 error
-			if [ -f ${srcfiles[$i]} ]; then continue; fi
 
+		#If the file has not been deleted then check for changes
+		if [ -f "${srcfiles[$i]}" ]; then
+			#Get actual md5 of the file and compare with last one
+			#Getting the md5 and updating the file should be as close as posible
+			#for avoiding race conditions
+			oldmd5=${filemd5[$i]}
+			newmd5=$(md5sum "${srcfiles[$i]}" | awk '{print $1}')
+			if [ "$newmd5" != "$oldmd5" ]; then
+				#Update md5 in the array and file in dstdir
+				update_file "${srcfiles[$i]}" "${dstfiles[$i]}"
+				filemd5[$i]=$newmd5
+			fi
+
+		#The file has been deleted
+		else
 			#Store in local vars and remove from srcfiles and dstfiles array
 			s=${srcfiles[$i]}
 			d=${dstfiles[$i]}
@@ -200,78 +353,67 @@ while true; do
 			#For that, check if there are missing folders in the path
 			words=$(echo $s | awk '{n=split($0,a,"/"); for (i=1;i<n;i++) print a[i]}')
 			path=""
-			srcpath=""
 			missing_folders=0
 			for w in $words; do
 				path="$path/$w"
-				if [ ! -d "$path" ]; then
-					missing_folders=$(($missing_folders + 1));
-					if [ -z "$srcpath" ]; then srcpath=$path; fi
-				fi
+				if [ ! -d "$path" ]; then missing_folders=$(($missing_folders + 1)); fi
 			done
+
 			#If the removed one was just the file
 			if [ $missing_folders -eq 0 ]; then
-				print_msg "[-] Removed file $d" 1 orange
 				remove_file $d
-				continue
-			fi
 
-			#For a removed dir
-			#Get the equivalent path in dstdir
-			remove=($(echo $d | awk '{n=split($0,a,"/"); for(i=1;i<n;i++) print a[i]}'))
-			dstpath=""
-			for i in ${!remove[@]}; do
-				dstpath="$dstpath/${remove[$i]}"
-				if [ ! $i -lt $((${#remove[@]} - $missing_folders)) ]; then
-					#Get the dstdir of the removed dir
-					ddir=""
-					for j in ${!dst[@]}; do
-						tmp=$(echo "$d" | grep "${dst[$j]}")
-						if [ ! -z $tmp ]; then
-							ddir=${dst[$j]};
-							break
+			#If a dir was removed
+			else
+				#Get the equivalent path in dstdir
+				remove_words=($(echo $d | awk '{n=split($0,a,"/"); for(i=1;i<n;i++) print a[i]}'))
+				dstpath=""
+				for i in ${!remove_words[@]}; do
+					dstpath="$dstpath/${remove_words[$i]}"
+
+					#index is >= len of path - missing folders --> equivalent folder of the removed one in src
+					if [ $i -ge $((${#remove_words[@]} - $missing_folders)) ]; then
+						#Get the dstdir of the removed dir
+						ddir=""
+
+						#Iterate through all dirs supied in args and compare with the removed file
+						#So we can find in which dir the file is
+						for j in ${!dst[@]}; do
+							tmp=$(echo "$d" | grep "${dst[$j]}") #tmp is not empty if the file is inside the dir in dst
+							if [ ! -z "$tmp" ]; then
+								ddir=${dst[$j]};
+								break
+							fi
+						done
+
+						#Ensure that we the dir of the file is found
+						if [ -z "$ddir" ]; then
+							print_msg "[!] Unexpected error" 0 red
+							exit 1
 						fi
-					done
-					if [ -z $ddir ]; then
-						print_msg "[!] Unexpected error" 0 red
-						exit 1
-					fi
 
-					#Ensure that the dir to remove is not outside dstdir
-					in_dst=$(echo "$dstpath" | grep "$ddir")
-					if [ ! -z $in_dst ]; then
-						#Ensure that the dir has not any other file
-						other_files=$(find $dstpath -type f | grep -v $d) #TODO --> support remote
-						if [ ! -z "$other_files" ]; then
-							print_msg "[-] Removed file $d" 1 orange
-							remove_file $d
+						#Ensure that the dir to remove is not outside dstdir
+						in_dst=$(echo "$dstpath" | grep "$ddir")
+						if [ ! -z "$in_dst" ]; then
+							#Ensure that the dir has not any other file
+							other_files=$(otherfiles_in_dir $dstpath $d)
+							if [ "$other_files" == "1" ]; then
+								remove_file $d
+							else
+								remove_file $d
+								remove_dir $dstpath
+							fi
 						else
-							print_msg "[-] Removed file $d" 1 orange
-							print_msg "[-] Removed folder $dstpath" 1 orange
-							remove_dir $dstpath
+							print_msg "[!] Removed folder is outside $ddir" 0 red
+							exit 1
 						fi
-					else
-						print_msg "[!] Removed folders is outside $ddir" 0 red
-						exit 1
+
+						break
 					fi
-
-					break
-				fi
-			done
-
+				done
+			fi
 			#Continue to next file
 			continue
-		fi
-
-		#Get actual md5 of the file and compare with last one
-		newmd5=$(echo $tmp | awk '{print $1}')
-		oldmd5=${filemd5[$i]}
-		if [ "$newmd5" != "$oldmd5" ]; then
-			print_msg "[*] Updated file ${dstfiles[$i]}" 1 blue
-
-			#Update md5 in the array and file in dstdir
-			filemd5[$i]=$newmd5
-			update_file ${srcfiles[$i]} ${dstfiles[$i]}
 		fi
 	done
 
@@ -297,14 +439,16 @@ while true; do
 					if [[ -z "$isnew" ]]; then
 						srcfiles+=("$s/$ff")
 						dstfiles+=("$d/$ff")
-						md5=$(md5sum $s/$ff | awk '{print $1}')
-						filemd5+=("$md5")
-
 						relativedir=$(dirname $ff)
-						mkdir -p "$d/$relativedir"
-						update_file "$s/$ff" "$d/$ff"
 
-						print_msg "[+] Created file $d/$ff" 1 green
+						create_dir "$d/$relativedir"
+
+						#Getting the md5 and updating the file should be as close as possible
+						#for avoiding race conditions
+						md5=$(md5sum "$s/$ff" | awk '{print $1}')
+						create_file "$s/$ff" "$d/$ff"
+
+						filemd5+=("$md5")
 					fi
 				done
 			fi
