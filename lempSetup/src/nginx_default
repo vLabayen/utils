@@ -18,8 +18,11 @@ server {
     }
 
     location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php##PHPVERSION##-fpm.sock;
+	try_files /index.php /index.php;
+
+	fastcgi_pass unix:/run/php/php##PHPVERSION##-fpm.sock;
+	fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+	include /etc/nginx/fastcgi_params;
     }
 
     location ~ /\.ht {

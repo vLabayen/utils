@@ -28,7 +28,6 @@ sudo service sshd restart
 #Configure nginx
 cat src/nginx_default | sed -e "s/##SERVERNAME##/${hname}/" | sed -e "s/##PHPVERSION##/${phpversion}/" > src/nginx_default.tmp
 sudo mv src/nginx_default.tmp /etc/nginx/sites-available/default
-sudo cp src/fastcgi-php.conf /etc/nginx/snippets/fastcgi-php.conf
 sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/${hname}_nginx.key -out /etc/ssl/certs/${hname}_nginx.crt -config src/crt.conf
 sudo systemctl reload nginx
 
