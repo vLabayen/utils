@@ -6,6 +6,7 @@ sudo apt upgrade
 sudo add-apt-repository universe
 
 #Install packages
+sudo apt install openssh-server
 sudo apt install net-tools
 sudo apt install nginx
 sudo apt install php-fpm
