@@ -27,17 +27,21 @@ while getopts "s:d:c:n:r:vVh-:" opt; do
 	      ignore-dot) ignore_dot=1;;
             esac;;
         s )
-	    if [ ! -d "$OPTARG" ]; then
-		echo "$OPTARG not found"
-		exit 1
-	    else src+=($(realpath "$OPTARG"))
-            fi;;
+            #We can check where the dir exists and use realpath. But done later to made it in the same place as dst
+	    #if [ ! -d "$OPTARG" ]; then
+	    #	echo "$OPTARG not found"
+	    #	exit 1
+	    #else src+=($(realpath "$OPTARG"))
+            #fi;;
+            src+=("$OPTARG");;
         d )
-	    if [ ! -d "$OPTARG" ]; then
-		echo "$OPTARG not found"
-		exit 1
-	    else dst+=($(realpath "$OPTARG"))
-	    fi;;
+	    #We cannot check wheter the dir exists and use realpath here because remote arg could be supplied after this one
+	    #if [ ! -d "$OPTARG" ]; then
+	    #	echo "$OPTARG not found"
+	    #	exit 1
+	    #else dst+=($(realpath "$OPTARG"))
+	    #fi;;
+            dst+=("$OPTARG");;
 	c ) check_file_change_interval=$OPTARG;;
 	n ) check_new_file_interval=$OPTARG;;
 	r )
@@ -94,6 +98,35 @@ function print_msg() {
 		esac
 	else
 		echo -e $1
+	fi
+}
+
+function absolute_path() {
+	#absolute_path relative_path
+	if [ -z "$1" ]; then
+		print_msg "First argument (relative_path) of absolute_path is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then echo $(ssh $remote "realpath $1")
+	else echo $(realpath $1)
+	fi
+}
+
+function check_dir() {
+	#check_dir dst
+	if [ -z "$1" ]; then
+		print_msg "First argument (dst) of check_dir is empty" 0 red
+		exit 1
+	fi
+
+	if [ -z "$remote" ]; then
+		if [ -d "$1" ]; then echo "0"
+		else echo "1"
+		fi
+	else
+		ssh $remote "if [ -d \"$1\" ]; then exit 0; else exit 1; fi"
+		echo "$?"
 	fi
 }
 
@@ -157,7 +190,7 @@ function create_file() {
 		cp $1 $2
 		print_msg "[+] Created file $2" 1 green
 	else
-		scp $1 $remote:$2
+		scp $1 $remote:$2 2>/dev/null 1>&2
 		print_msg "[+] Created file $remote:$2" 1 green
 	fi
 }
@@ -177,7 +210,7 @@ function update_file() {
 		cp $1 $2
 		print_msg "[*] Updated file $2" 1 blue
 	else
-		scp $1 $remote:$2
+		scp $1 $remote:$2 2>/dev/null 1>&2
 		print_msg "[*] Updated file $remote:$2" 1 blue
 	fi
 }
@@ -242,6 +275,28 @@ function remove_dir() {
 	fi
 }
 
+#Check that all dirs in src and dst really exists
+#Translate them to absolute paths
+for i in ${!src[@]}; do
+	s="${src[$i]}"
+	d="${dst[$i]}"
+
+	if [ ! -d "$s" ]; then
+		print_msg "$s : No such directory" 0 red
+		exit 1
+	else
+		src[$i]="$(realpath $s)"
+	fi
+
+	if [ "$(check_dir $d)" == "1" ]; then
+		if [ -z "$remote" ]; then print_msg "$d : No such directory" 0 red
+		else print_msg "$remote:$d : No such directory" 0 red
+		fi
+		exit 1
+	else
+		dst[$i]="$(absolute_path $d)"
+	fi
+done
 
 #Get all the files inside src folders and set path to dst folder
 srcfiles=()
@@ -260,6 +315,10 @@ else
 		#Get src and dst dir
 		s="${src[$i]}"
 		d="${dst[$i]}"
+
+		echo $s
+		echo $d
+		exit
 
 		#Get all files in src (find files in $s, replace ~ and relative paths to absolute, return relative path to $s)
 		ffiles=$(find $s -type f -exec realpath --relative-to $s {} \;)
@@ -447,6 +506,7 @@ while true; do
 						#for avoiding race conditions
 						md5=$(md5sum "$s/$ff" | awk '{print $1}')
 						create_file "$s/$ff" "$d/$ff"
+						print_msg "[?] Created file $d/$ff" 3
 
 						filemd5+=("$md5")
 					fi
