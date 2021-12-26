@@ -1,0 +1,19 @@
+#!/bin/bash
+
+if [ $# -lt 1 ]; then
+	echo "Usage: pdfsearch '<search_pattern>' [search_path]" 1>&2
+	exit 1
+fi
+
+search_pattern="$1"
+search_path=''
+if [ $# == 2 ]; then search_path="$2"; fi
+
+IFS=$'\n'
+for f in $(find $search_path -type f -name *.pdf); do
+	matches=$(pdftotext -q "$f" - | egrep -i "$search_pattern")
+	for m in $matches; do
+		cprint "$f:" --color 'dmagenta' -n
+		echo $m | egrep -i --color=always "$search_pattern"
+	done
+done

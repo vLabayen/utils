@@ -1,0 +1,20 @@
+#!/bin/bash
+
+mode=$1
+input=$2
+
+function usage_help() {
+	echo "Usage: ctar <mode> <input>"
+	echo " - Mode : 'enc' for encrypt or 'dec' for decrypt"
+	echo " - Input : Path to input file"
+}
+
+if [ -z "$mode" ] || [ -z "$input" ]; then usage_help; fi
+
+if [[ "$mode" == "enc" ]]; then
+	fname=$(basename $input)
+	tar -zcf - $input | openssl enc -aes-256-cbc -md sha512 -pbkdf2 -iter 100000 -salt -out $fname.ctar.gz
+
+elif [[ "$mode" == "dec" ]]; then
+	cat $input | openssl enc -aes-256-cbc -md sha512 -pbkdf2 -iter 100000 -salt -d | tar -zx
+fi
